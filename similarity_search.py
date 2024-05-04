@@ -9,6 +9,7 @@ import time
 class SimilaritySearch:
     """
     TODO: Add pickle of lsh table
+    TODO: Add parameter for distance to count as collision
     """
     def __init__(self, 
                  model_name, 
@@ -36,7 +37,6 @@ class SimilaritySearch:
 
         self.embeddings = np.array([])
         self.embedding_ids = []
-        #self.hash_id = 0
 
     def hash_func(self, embedding):
         """Randomly projects the embeddings and then computes bit-wise hashes."""
@@ -57,7 +57,7 @@ class SimilaritySearch:
         return y
     
     def compute_hash(self, image_batch):
-        """Computes hash on a given dataset."""
+        """Computes hash on a given batch."""
         device = self.model.device
         # Prepare the input images for the model.
         batch = dict(image=image_batch)
@@ -76,9 +76,6 @@ class SimilaritySearch:
         batch["hashes"] = hashes
         return batch
 
-    """
-    Pass hash id from tracker to keep track of the object
-    """
     def add(self, batch, ids: int, label: str):
         """Adds the images to the LSH table."""
         hashes = self.compute_hash(batch)["hashes"]
@@ -87,8 +84,10 @@ class SimilaritySearch:
         #self.hash_id += 1
 
     def query_lsh(self, image):
-        # Compute the hashes of the query image and fetch the results.
-        #batch = dict(image=[image])
+        """
+        Queries the LSH table for similar images.
+        Returns the counts of similar images.
+        """
         hash = self.compute_hash([image])["hashes"][0]
         results = self.lsh.query(hash)
         if self.verbose:
@@ -108,9 +107,12 @@ class SimilaritySearch:
         return counts
     
     def query(self, image, object_id=None):
+        """
+        Queries the LSH table for similar images.
+        Returns the top result.
+        """
         # Query the LSH table
         counts = self.query_lsh(image)
-        print("Counts:", counts)
         # Get the track id with the highest count
         top_result = sorted(counts, key=counts.get, reverse=True)
         if len(top_result) == 0:
@@ -120,17 +122,15 @@ class SimilaritySearch:
             return top_id, label, object_id
         
     def query_processor(self, query_queue, result_queue, monitor):
-        print("Query Processor Started")
+        """Processes the queries in the queue."""
         while monitor.is_set():
             if (query := query_queue.get()):
-                print("Query Processing")
                 result_queue.put(self.query(query["image"], query["id"]))
 
     def add_processor(self, add_queue, monitor):
-        print("Add Processor Started")
+        """Processes the adds in the queue."""
         while monitor.is_set():
             if (add := add_queue.get()):
-                print("Add Processing")
                 self.add(add["images"], add["id"], add["label"])
         
 
@@ -251,7 +251,7 @@ if __name__ == '__main__':
     from PIL import Image
     import glob
     model_name = "google/vit-base-patch16-224-in21k"
-    similarity = SimilaritySearch(model_name, hash_size=16, num_tables=1, device="cpu", verbose=True)
+    similarity = SimilaritySearch(model_name, hash_size=7, num_tables=1, device="cuda", verbose=True)
     ricks = glob.glob("*.jpg")
     rick_imgs = []
     from multiprocessing import Process, Event, Queue
@@ -262,12 +262,15 @@ if __name__ == '__main__':
         print("Adding Rick:", rick)
         img = Image.open(rick)
         rick_imgs.append(img)
-        #if i == len(ricks) - 2:
-        #    break
+        if i == len(ricks) - 2:
+            print(rick)
+            break
     #process = multiprocessing.Process(target=similarity.add, args=(rick_imgs, 0, "rick"))
     #process.start()
     #process.join()
+    start = time.time()
     similarity.add(rick_imgs, 0, "rick")
+    print("Time to add:", (time.time() - start) * 1000, "ms")
     test_rick = Image.open("rick7.jpg")
     print("Testing Slightly Different Rick:", "rick7.jpg")
     start = time.time()
