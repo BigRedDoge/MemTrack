@@ -2,6 +2,8 @@ from ultralytics import YOLO
 import torch
 from collections import defaultdict
 from multiprocessing import Process, Queue, Event
+import cv2
+import numpy as np
 
 from similarity_search import SimilaritySearch
 
@@ -11,7 +13,7 @@ class Tracker:
     def __init__(self, 
                  yolo_model,
                  embedding_model_name, 
-                 hash_size=8, 
+                 hash_size=6, 
                  num_tables=10,
                  device="cuda", 
                  verbose=False):
@@ -43,7 +45,8 @@ class Tracker:
         # if object id is not detected in the frame, compute hash of the images
         self.currently_tracking = defaultdict(lambda: {
             "images": [],
-            "label": None
+            "label": None,
+            "id": None
         })
         # dict with object id as key and tracking id as value
         # this is so you can look up track id from matching object id
@@ -64,8 +67,10 @@ class Tracker:
         self.queried_objects = set()
         # track id
         self.track_id = 0
+        # labels of tracked objects, key is track id
+        self.track_labels = {}
 
-    def track(self, image):
+    def track(self, image, conf=0.3, iou=0.5):
         """
         Tracks object with yolo and store object images of detections
         Once the object is not detected, compute hash of the stacked images
@@ -75,10 +80,15 @@ class Tracker:
 
         Limitation: if object comes back in frame before being processed by add, it will be treated as new object
         """
-        results = self.yolo.track(image, persist=True)
+        results = self.yolo.track(image, conf=conf, iou=iou, persist=True)
         # Get the boxes and track IDs
         boxes = results[0].boxes.xywh.cpu()
         object_ids = results[0].boxes.id.int().cpu().tolist()
+        class_names = results[0].boxes.cls.cpu().tolist()
+        object_labels = {object_id: class_names[i] for i, object_id in enumerate(object_ids)}
+        #for object_id, label in track_labels.items():
+        #    self.track_labels[object_id] = label
+
         if self.verbose:
             print("Track IDs:", object_ids)
 
@@ -104,24 +114,28 @@ class Tracker:
                         self.add_queue.put(add)
                     # remove object id from currently tracking
                     del(self.currently_tracking[object_id])
-        
+                    # add track id to tracked ids
+                    self.tracked_ids[object_id] = track_id
+                    # add track history
+                    self.track_history[track_id]["label"] = tracked_object["label"]
+                    self.track_history[track_id]["xywh"][object_id] = self.yolo_track_history[object_id]
+
         # get results of similarity query queue
         while sim_result := self.result_queue.get():
             if self.verbose:
                 print("Similarity Result:", sim_result)
             track_id, label, object_id = sim_result
-            if object_id in self.queried_objects:
-                # update track id to match already tracked object
-                self.currently_tracking[object_id]["id"] = track_id
-                # remove object id from queried objects so when we add to the add queue, it will have the correct track id
-                self.queried_objects.remove(object_id)
-            self.tracked_ids[object_id] = track_id
+            # if object is currently being tracked, update track id and add history
             if track_id is not None:
+                if object_id in self.queried_objects:
+                    # update track id to match already tracked object
+                    self.currently_tracking[object_id]["id"] = track_id
+                    # remove object id from queried objects so when we add to the add queue, it will have the correct track id
+                    self.queried_objects.remove(object_id)
+                self.tracked_ids[object_id] = track_id
                 # add new track history to existing track history
                 # add it to object id to distinguish between detections
                 # sort by object id to get latest
-                self.track_history[track_id]["xywh"][object_id] = self.yolo_track_history[object_id]
-            else:
                 # set track history to matching yolo track history
                 self.track_history[track_id]["label"] = label
                 self.track_history[track_id]["xywh"][object_id] = self.yolo_track_history[object_id]
@@ -137,13 +151,16 @@ class Tracker:
             else add object to query queue 
         """
         """
-        TODO: get label of object
         TODO: figure out format to return tracked objects
         """
         for box, object_id in zip(boxes, object_ids):
             x, y, w, h = box
             track = self.yolo_track_history[object_id]
+            # if no label, add label to yolo track history
+            if not self.yolo_track_history[object_id]["label"]:
+                self.yolo_track_history[object_id]["label"] = object_labels[object_id]
             track_box = (float(x), float(y), float(w), float(h))
+            # add track box to yolo track history
             track.append(track_box)  # x, y center point
             # get extracted object image
             object_image = self.extract_objects(image, box)
@@ -159,7 +176,7 @@ class Tracker:
                     # add object to currently being tracked
                     self.currently_tracking[object_id] = {
                         "images": [object_image],
-                        "label": None,
+                        "label": object_labels[object_id],
                         "id": track_id
                     }
             else:
@@ -168,7 +185,7 @@ class Tracker:
                 else:
                     self.currently_tracking[object_id] = {
                         "images": [object_image],
-                        "label": None,
+                        "label": object_labels[object_id],
                         "id": None
                     }
                     # add object id to query queue
@@ -178,17 +195,19 @@ class Tracker:
                     })
                     # add object id to queried objects
                     self.queried_objects.add(object_id)
-
+        
+        # track ids for the current frame
+        track_ids = {self.tracked_ids[key]: key for key in object_ids}
+        # history of current tracked objects in frame
+        history = {key: self.track_history[key] for key, value in track_ids.items()}
+        track_labels = {key: value["label"] for key, value in history.items()}
+        return Result(history, track_ids, track_labels, image)
 
     def extract_objects(self, image, box):
         """Extracts a detected object from an image."""
         x, y, w, h = box
         x1, y1, x2, y2 = int(x - w / 2), int(y - h / 2), int(x + w / 2), int(y + h / 2)
         return image[y1:y2, x1:x2]
-
-    def show(self):
-        """Displays the tracked objects."""
-        pass
 
     def stop(self):
         """Stops the similarity query and add processess."""
@@ -200,3 +219,43 @@ class Tracker:
    
     def __del__(self):
         self.stop()
+
+
+class Result:
+    """Result of tracking objects in a frame."""
+    def __init__(self, history, track_ids, track_labels, image):
+        # history of tracked objects, key is track id
+        self.history = history
+        # track ids for the current frame, key is track id, value is object id
+        self.track_ids = track_ids
+        # labels of tracked objects, key is track id
+        self.track_labels = track_labels
+        self.image = image
+
+    def plot(self):
+        """Displays the tracked objects."""
+        if self.image is None:
+            return None
+        frame = self.image.copy()
+        for track_id, track in self.track_history.items():
+            # get the latest track box
+            xywh = track["xywh"][self.track_ids[track_id]]
+            #for box in xywh:
+            x, y, w, h = xywh[-1]
+            x1, y1, x2, y2 = int(x - w / 2), int(y - h / 2), int(x + w / 2), int(y + h / 2)
+            # draw the bounding boxes
+            frame = cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            # Draw the tracking lines
+            xy_points = [(int(x), int(y)) for x, y, _, _ in xywh]
+            points = np.hstack(xy_points).astype(np.int32).reshape((-1, 1, 2))
+            cv2.polylines(frame, [points], isClosed=False, color=(230, 230, 230), thickness=10)
+
+            # draw label and track id
+            frame = cv2.putText(frame, track["label"], (x1, y1), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
+            frame = cv2.putText(frame, str(track_id), (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2, cv2.LINE_AA)
+
+        cv2.imshow("Tracked Objects", frame)
+
+    def __str__(self):
+        return str(self.history)
+    
