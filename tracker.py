@@ -180,9 +180,11 @@ class Tracker:
                     self.queried_objects.add(object_id)
 
 
-    def extract_objects(self, frame, box):
+    def extract_objects(self, image, box):
         """Extracts a detected object from an image."""
-        pass
+        x, y, w, h = box
+        x1, y1, x2, y2 = int(x - w / 2), int(y - h / 2), int(x + w / 2), int(y + h / 2)
+        return image[y1:y2, x1:x2]
 
     def show(self):
         """Displays the tracked objects."""
