@@ -72,6 +72,9 @@ class Tracker:
 
     def track(self, image, conf=0.3, iou=0.5):
         """
+        TODO: add boxes to result even if not tracked, make result be able to plot this
+        """
+        """
         Tracks object with yolo and store object images of detections
         Once the object is not detected, compute hash of the stacked images
         On new detection, query the hash table for similar objects
@@ -80,11 +83,19 @@ class Tracker:
 
         Limitation: if object comes back in frame before being processed by add, it will be treated as new object
         """
-        results = self.yolo.track(image, conf=conf, iou=iou, persist=True)
+        results = self.yolo.track(image, persist=True)
+        print("Results:", results[0].boxes)
+        
         # Get the boxes and track IDs
         boxes = results[0].boxes.xywh.cpu()
+        cls = results[0].boxes.cls.cpu().tolist()
+        class_names = [self.yolo.names[i] for i in cls]
+
+        if not results[0].boxes.id:
+            print("No objects detected")
+            return Result(None, (results[0].boxes.xywh.cpu(), class_names), image)
+        
         object_ids = results[0].boxes.id.int().cpu().tolist()
-        class_names = results[0].boxes.cls.cpu().tolist()
         object_labels = {object_id: class_names[i] for i, object_id in enumerate(object_ids)}
         #for object_id, label in track_labels.items():
         #    self.track_labels[object_id] = label
@@ -150,9 +161,6 @@ class Tracker:
             if object is currently being tracked, add images
             else add object to query queue 
         """
-        """
-        TODO: figure out format to return tracked objects
-        """
         for box, object_id in zip(boxes, object_ids):
             x, y, w, h = box
             track = self.yolo_track_history[object_id]
@@ -188,7 +196,7 @@ class Tracker:
                         "label": object_labels[object_id],
                         "id": None
                     }
-                    # add object id to query queue
+                    # add object to query queue
                     self.query_queue.put({
                         "image": object_image,
                         "id": object_id
@@ -201,7 +209,7 @@ class Tracker:
         # history of current tracked objects in frame
         history = {key: self.track_history[key] for key, value in track_ids.items()}
         track_labels = {key: value["label"] for key, value in history.items()}
-        return Result(history, track_ids, track_labels, image)
+        return Result((history, track_ids, track_labels), (boxes, class_names), image)
 
     def extract_objects(self, image, box):
         """Extracts a detected object from an image."""
@@ -223,13 +231,23 @@ class Tracker:
 
 class Result:
     """Result of tracking objects in a frame."""
-    def __init__(self, history, track_ids, track_labels, image):
-        # history of tracked objects, key is track id
-        self.history = history
-        # track ids for the current frame, key is track id, value is object id
-        self.track_ids = track_ids
-        # labels of tracked objects, key is track id
-        self.track_labels = track_labels
+    def __init__(self, track, boxes, image):
+        if track is not None:
+            # history of tracked objects, key is track id
+            self.history = track[0]
+            # track ids for the current frame, key is track id, value is object id
+            self.track_ids = track[1]
+            # labels of tracked objects, key is track id
+            self.track_labels = track[2]
+        else:
+            self.history = None
+            self.track_ids = None
+            self.track_labels = None
+        # boxes of detected objects
+        self.boxes = boxes[0]
+        # class names of detected objects
+        self.class_names = boxes[1]
+        # image with tracked objects
         self.image = image
 
     def plot(self):
@@ -237,22 +255,30 @@ class Result:
         if self.image is None:
             return None
         frame = self.image.copy()
-        for track_id, track in self.track_history.items():
-            # get the latest track box
-            xywh = track["xywh"][self.track_ids[track_id]]
-            #for box in xywh:
-            x, y, w, h = xywh[-1]
-            x1, y1, x2, y2 = int(x - w / 2), int(y - h / 2), int(x + w / 2), int(y + h / 2)
-            # draw the bounding boxes
-            frame = cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            # Draw the tracking lines
-            xy_points = [(int(x), int(y)) for x, y, _, _ in xywh]
-            points = np.hstack(xy_points).astype(np.int32).reshape((-1, 1, 2))
-            cv2.polylines(frame, [points], isClosed=False, color=(230, 230, 230), thickness=10)
+        if self.history:
+            for track_id, track in self.track_history.items():
+                # get the latest track box
+                xywh = track["xywh"][self.track_ids[track_id]]
+                #for box in xywh:
+                x, y, w, h = xywh[-1]
+                x1, y1, x2, y2 = int(x - w / 2), int(y - h / 2), int(x + w / 2), int(y + h / 2)
+                # draw the bounding boxes
+                frame = cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                # Draw the tracking lines
+                xy_points = [(int(x), int(y)) for x, y, _, _ in xywh]
+                points = np.hstack(xy_points).astype(np.int32).reshape((-1, 1, 2))
+                cv2.polylines(frame, [points], isClosed=False, color=(230, 230, 230), thickness=10)
 
-            # draw label and track id
-            frame = cv2.putText(frame, track["label"], (x1, y1), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
-            frame = cv2.putText(frame, str(track_id), (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2, cv2.LINE_AA)
+                # draw label and track id
+                frame = cv2.putText(frame, track["label"], (x1, y1), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
+                frame = cv2.putText(frame, str(track_id), (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2, cv2.LINE_AA)
+
+        # Draw bounding boxes and write class names
+        for box, class_name in zip(self.boxes, self.class_names):
+            x, y, w, h = box
+            x1, y1, x2, y2 = int(x - w / 2), int(y - h / 2), int(x + w / 2), int(y + h / 2)
+            frame = cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            frame = cv2.putText(frame, class_name, (x1, y1), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
 
         cv2.imshow("Tracked Objects", frame)
 
