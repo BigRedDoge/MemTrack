@@ -77,8 +77,6 @@ class Tracker:
             "xywh": [],
             "label": None
         })
-        # tracked on previous frame
-        #self.tracked_on_previous_frame = set()
         # queried objects so that we don't query the same object again
         self.queried_objects = set()
         # track id
@@ -102,8 +100,6 @@ class Tracker:
         On new detection, query the hash table for similar objects
         If similar object is found, add to the track id accordingly
         If no similar object is found, create a new track id
-
-        Limitation: if object comes back in frame before being processed by add, it will be treated as new object
         """
         start = time.time()
         if not self.multiprocessing:
@@ -172,11 +168,8 @@ class Tracker:
             track_id, label, object_id = sim_result
             # if object is currently being tracked, update track id and add history
             if track_id is not None:
-                #if object_id in self.queried_objects:
                 # update track id to match already tracked object
-                #self.currently_tracking[object_id]["id"] = track_id
-                # remove object id from queried objects so when we add to the add queue, it will have the correct track id
-                #self.queried_objects.remove(object_id)
+                self.currently_tracking[object_id]["id"] = track_id
                 self.tracked_ids[object_id] = track_id
                 # add new track history to existing track history
                 # add it to object id to distinguish between detections
