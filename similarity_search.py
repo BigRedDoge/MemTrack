@@ -68,8 +68,7 @@ class SimilaritySearch:
         )
         new_batch = {"pixel_values": image_batch_transformed.to(device)}
 
-        # Compute embeddings and pool them i.e., take the representations from the [CLS]
-        # token.
+        # Compute embeddings and pool them i.e., take the representations from the [CLS] token.
         with torch.no_grad():
             embeddings = self.model(**new_batch).last_hidden_state[:, 0].cpu().numpy()
 
