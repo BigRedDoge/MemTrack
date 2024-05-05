@@ -115,7 +115,7 @@ class SimilaritySearch:
         """
         # Query the LSH table
         counts = self.query_lsh(image)
-        # Get the track id with the highest count
+        # Get the track id with the highest Jaccard index
         top_result = sorted(counts, key=counts.get, reverse=True)
         if len(top_result) == 0:
             return None, None, object_id
@@ -164,8 +164,7 @@ class Table:
     def query(self, hashes: List[int]):
         results = []
 
-        # Loop over the query hashes and determine if they exist in
-        # the current table.
+        # Loop over the query hashes and determine if they exist in the current table.
         for h in hashes:
             if h in self.table:
                 results.extend(self.table[h])
