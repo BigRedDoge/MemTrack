@@ -91,7 +91,10 @@ class Tracker:
 
     def track(self, image, conf=0.3, iou=0.5):
         """
-        TODO: add boxes to result even if not tracked, make result be able to plot this
+        TODO: continue to check if new object has previously been tracked, if so, update track id
+        TODO: fix multiprocessing, it literally blue screens my computer
+        TODO: remove id from currently_tracking, it's not used
+        It's written "interestingly" with queues because I was trying to get multiprocessing to work
         """
         """
         Tracks object with yolo and store object images of detections
@@ -146,13 +149,6 @@ class Tracker:
                 # wait for object to be queried before adding, in case it has been tracked before (we want to use that track id)
                 if object_id not in self.queried_objects:
                     tracked_object = self.currently_tracking[object_id]
-                    # if object has been tracked before, use that track id
-                    #if tracked_object["id"]:
-                    #    track_id = tracked_object["id"]
-                    #else:
-                    #    track_id = self.track_id
-                    #    self.track_id += 1
-                    # track id is object, was updated in query result if seen before
                     track_id = self.tracked_ids[object_id]
                     add = {
                         "images": tracked_object["images"],
@@ -164,8 +160,6 @@ class Tracker:
                         self.add_queue.put(add)
                     # remove object id from currently tracking
                     del(self.currently_tracking[object_id])
-                    # add track id to tracked ids
-                    #self.tracked_ids[object_id] = track_id
                     # add track history
                     self.track_history[track_id]["label"] = tracked_object["label"]
                     self.track_history[track_id]["xywh"][object_id] = self.yolo_track_history[object_id]["xywh"]
