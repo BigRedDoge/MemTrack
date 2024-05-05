@@ -119,7 +119,6 @@ class Tracker:
             
         # Get the results of the YOLO model
         results = self.yolo.track(image, conf=conf, iou=iou, persist=True)
-        #print("Results:", results[0].boxes)
         
         # Get the boxes and track IDs
         boxes = results[0].boxes.xywh.cpu()
@@ -138,11 +137,15 @@ class Tracker:
         if self.verbose:
             print("Track IDs:", object_ids)
 
-        # add any tracked objects that are not detected in the current frame to the add queue
+        """
+        Add any tracked objects that are not detected in the current frame to the add queue
+        Wait for object to be queried before adding, in case it has been tracked before 
+        (we want to use that track id)
+        """
         tracking_keys = list(self.currently_tracking.keys())
         for object_id in tracking_keys:
             if object_id not in object_ids:
-                # wait for object to be queried before adding, in case it has been tracked before (we want to use that track id)
+                # wait for object to be queried before adding
                 if object_id not in self.queried_objects:
                     tracked_object = self.currently_tracking[object_id]
                     track_id = self.tracked_ids[object_id]
@@ -159,8 +162,12 @@ class Tracker:
                     # add track history
                     self.track_history[track_id]["label"] = tracked_object["label"]
                     self.track_history[track_id]["xywh"][object_id] = self.yolo_track_history[object_id]["xywh"]
-
-        # get results of similarity query queue
+        
+        """
+        Get the results from the similarity query queue
+        if similar object is found, update track id and add history
+        if no similar object is found, create a new track id
+        """
         while not self.result_queue.empty():
             sim_result = self.result_queue.get()
             if self.verbose:
@@ -283,9 +290,8 @@ class Result:
         else:
             self.track_history, self.track_ids, self.track_labels = None, None, None
         # boxes of detected objects
-        self.boxes = boxes[0]
         # class names of detected objects
-        self.class_names = boxes[1]
+        self.boxes, self.class_names = boxes
         # image with tracked objects
         self.image = image
 
