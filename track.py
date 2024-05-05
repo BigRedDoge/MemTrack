@@ -14,7 +14,7 @@ def main():
         device=device,
         verbose=True
     )
-    # Average time: 0.02482800139594324 Max time: 1.383957862854004
+
     cap = cv2.VideoCapture(0)
     while True:
         _, frame = cap.read()
