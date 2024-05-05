@@ -15,9 +15,11 @@ class SimilaritySearch:
                  model_name, 
                  hash_size=8, 
                  num_tables=10,
-                 device="cuda", 
+                 max_add_images=10,
+                 device="cuda",
                  verbose=False):
         self.verbose = verbose
+        self.max_add_images = max_add_images
 
         self.model = AutoModel.from_pretrained(model_name)
         self.model.to(device)
@@ -124,15 +126,21 @@ class SimilaritySearch:
     def query_processor(self, query_queue, result_queue, monitor):
         """Processes the queries in the queue."""
         while monitor.is_set():
-            if (query := query_queue.get()):
+            if query := query_queue.get():
                 result_queue.put(self.query(query["image"], query["id"]))
+            time.sleep(0.05)
 
     def add_processor(self, add_queue, monitor):
         """Processes the adds in the queue."""
         while monitor.is_set():
-            if (add := add_queue.get()):
-                self.add(add["images"], add["id"], add["label"])
-        
+            if add := add_queue.get():
+                if len(add["images"]) <= self.max_add_images:
+                    images = add["images"]
+                else:
+                    indices = np.linspace(0, len(add["images"]) - 1, self.max_add_images, dtype=int)
+                    images = [add["images"][i] for i in indices]
+                self.add(images, add["id"], add["label"])
+            time.sleep(0.05)
     
 class Table:
     """
@@ -147,7 +155,6 @@ class Table:
         entry = {"id_label": str(id) + "_" + str(label)}
 
         # Add the hash values to the current table.
-        print("hashes", hashes)
         for h in hashes:
             if h in self.table:
                 self.table[h].append(entry)
