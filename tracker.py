@@ -256,7 +256,7 @@ class Tracker:
         self.count += 1
         if end - start > self.max_time:
             self.max_time = end - start
-        print("Average time:", self.total_time / self.count, "Max time:", self.max_time)
+        print("Time:", end - start, "Average time:", self.total_time / self.count, "Max time:", self.max_time)
         return Result((history, track_ids, track_labels), (boxes, class_names), image)
 
     def extract_objects(self, image, box):
